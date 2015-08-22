@@ -11,6 +11,8 @@ import nimfa
 from scipy import sparse
 from multiprocessing import Pool
 
+from numba import autojit
+
 wordDict = {}
 articleDict = {}
 matrix = ""
@@ -57,7 +59,7 @@ def loadVectors(words,proc_id):
     cPickle.dump([row,column,matrix_data],open("data/proc/" + str(proc_id),'wb'))
     print "Process " + str(proc_id) + " ok"
 
-def optimize(a,b):
+def optimize(a,b,max_iter,alpha):
     global matrix
     global W
     global S
@@ -68,21 +70,62 @@ def optimize(a,b):
         v = list(matrix.getrow(i).toarray())[0]
         v = np.array(map((lambda x:(x > 0)),v),dtype = float)
         for j in range(max_iter):
+            #time1 = time.time()
             e = np.transpose(H2).dot(S[i])
-            f = np.array(map(softmax,e))
-            print H2.shape
-            for k in range(H2.shape[0]):
-                H2[k] += rate * alpha * np.array(map(gradient,v,f,[1] * H2.shape[1])) * S[i][k]
-            for k in range(len(S[i])):
-                S[i][k] += rate * alpha * np.array(map(gradient,v,f,H2[k])).sum()
-                if S[i][k] < 0:
-                    S[i][k] = 0
+            f = sv(e)
+            #for k in range(H2.shape[0]):
+            H2 += rate * alpha * (v - f)
+            H2 = np.transpose(np.transpose(H2) + S[i])
+            #gradient_H2(v,f,S[i],rate,alpha)
+            #H2[k] += rate * alpha * np.array(map(gradient,v,f,[1] * H2.shape[1])) * S[i][k]
+            S[i] += rate * alpha * H2.dot(v - f)
+            S[i] = np.array(map((lambda x:max(x,0)),S[i]))
+            #for k in range(len(S[i])):
+            #    S[i][k] += rate * alpha * gradient_S1(k,v,f)
+            #    S[i][k] += rate * alpha * np.array(map(gradient,v,f,H2[k])).sum()
+            #    if S[i][k] < 0:
+            #        S[i][k] = 0
             r = S[i]
             S[i] -= rate * alpha * np.transpose(H1).dot(H1.dot(S[i]) - W[i]) + 1e-8
-            S[i] = np.array(map((lambda x:(x > 0)),S[i]),dtype = float)
+            S[i] = np.array(map((lambda x:max(x,0)),S[i]),dtype = np.float32)
             for k in range(H1.shape[0]):
-                H1[k] -= rate * alpha * (H1[k].dot(r) - W[i][k]) * r + 2e-8 * H1[k]
+                gradient_H1(k,r,i,rate,alpha)
             rate *= 0.98
+            #time2 = time.time()
+            #print time2 - time1
+
+@autojit
+def sv(e):
+    return np.array(map(softmax,e))
+
+@autojit
+def gradient_H2(v,f,s,rate,alpha):
+    global H2
+    g = v - f
+    H2 += rate * alpha * g
+    H2 = np.transpose(np.transpose(H2) + s)
+    #H2[k] += rate * alpha * g * s
+    #H2[k] += rate * alpha * np.array(map(gradient,v,f,l)) * s
+
+@autojit
+def gradient_S1(k,v,f):
+    global H2
+    return ((v - f) * H2[k]).sum()
+    #return np.array(map(gradient,v,f,H2[k])).sum()
+
+@autojit
+def gradient_S2(i,rate,alpha):
+    global W
+    global S
+    global H1
+    S[i] -= rate * alpha * np.transpose(H1).dot(H1.dot(S[i]) - W[i]) + 1e-8
+    S[i] = np.array(map((lambda x:(x > 0)),S[i]),dtype = float)
+
+@autojit
+def gradient_H1(k,r,i,rate,alpha):
+    global W
+    global H1
+    H1[k] -= rate * alpha * (H1[k].dot(r) - W[i][k]) * r + 2e-8 * H1[k]
 
 class MC():
 
@@ -181,18 +224,20 @@ class MC():
         del vectors
         H1 = np.random.rand(W.shape[1],k) / 10000
         S = np.random.rand(W.shape[0],k) / 10000
-        H2 = np.random.rand(k,len(articleDict)) / W.shape[1]
-        group = int(S.shape[0] / proc_number)
-        start = 0
-        p = Pool()
-        for i in range(proc_number):
-            if i != proc_number - 1:
-                p.apply_async(optimize,args = (start,start + group))
-                start += group
-            else:
-                p.apply_async(optimize,args = (start,S.shape[0]))
-        p.close()
-        p.join()
+        H2 = np.random.rand(k,len(articleDict)) / 10000
+        print "Begin Optimizing"
+        optimize(0,S.shape[0],max_iter,alpha)
+        #group = int(S.shape[0] / proc_number)
+        #start = 0
+        #p = Pool()
+        #for i in range(proc_number):
+        #    if i != proc_number - 1:
+        #        p.apply_async(optimize,args = (start,start + group,max_iter,alpha))
+        #        start += group
+        #    else:
+        #        p.apply_async(optimize,args = (start,S.shape[0],max_iter,alpha))
+        #p.close()
+        #p.join()
         wordVectors = {}
         myESA = ESA.ESA()
         wordsim = myESA.getWordSim()
@@ -204,5 +249,5 @@ class MC():
 if __name__ == "__main__":
     myMC = MC("text8.txt")
     myMC.loadMatrix(20)
-    myMC.nn(1000,200,0.05,20)
+    myMC.nn(1000,10,0.05,20)
     print "WordVectors ok"

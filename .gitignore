@@ -1,2 +1,4 @@
 data/*
 text8.txt
+nohup.out
+*.pyc
