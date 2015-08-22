@@ -104,8 +104,6 @@ def gradient_H2(v,f,s,rate,alpha):
     g = v - f
     H2 += rate * alpha * g
     H2 = np.transpose(np.transpose(H2) + s)
-    #H2[k] += rate * alpha * g * s
-    #H2[k] += rate * alpha * np.array(map(gradient,v,f,l)) * s
 
 @autojit
 def gradient_S1(k,v,f):
@@ -227,17 +225,6 @@ class MC():
         H2 = np.random.rand(k,len(articleDict)) / 10000
         print "Begin Optimizing"
         optimize(0,S.shape[0],max_iter,alpha)
-        #group = int(S.shape[0] / proc_number)
-        #start = 0
-        #p = Pool()
-        #for i in range(proc_number):
-        #    if i != proc_number - 1:
-        #        p.apply_async(optimize,args = (start,start + group,max_iter,alpha))
-        #        start += group
-        #    else:
-        #        p.apply_async(optimize,args = (start,S.shape[0],max_iter,alpha))
-        #p.close()
-        #p.join()
         wordVectors = {}
         myESA = ESA.ESA()
         wordsim = myESA.getWordSim()
