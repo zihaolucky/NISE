@@ -22,7 +22,7 @@ H1 = ""
 H2 = ""
 
 def softmax(i):
-    return 1.0 / (1.0 + np.exp(-1.0 * i))
+    return 1.0 / (1.0 + np.exp(-i))
 
 def gradient(L,p,i):
     return (L - p) * i
@@ -65,65 +65,38 @@ def optimize(a,b,max_iter,alpha):
     global S
     global H1
     global H2
-    for i in range(a,b):
+    j = 0
+    while j < max_iter:
         rate = 1
-        v = list(matrix.getrow(i).toarray())[0]
-        v = np.array(map((lambda x:(x > 0)),v),dtype = float)
-        for j in range(max_iter):
+        for i in range(a,b):
+            v = list(matrix.getrow(i).toarray())[0]
+            v = np.array(map((lambda x:(x > 0)),v),dtype = np.float32)
             #time1 = time.time()
             e = np.transpose(H2).dot(S[i])
-            f = sv(e)
-            #for k in range(H2.shape[0]):
+            f = np.array(map(softmax,e))
             H2 += rate * alpha * (v - f)
-            H2 = np.transpose(np.transpose(H2) + S[i])
-            #gradient_H2(v,f,S[i],rate,alpha)
-            #H2[k] += rate * alpha * np.array(map(gradient,v,f,[1] * H2.shape[1])) * S[i][k]
+            H2 = np.transpose(np.transpose(H2) * S[i])
             S[i] += rate * alpha * H2.dot(v - f)
             S[i] = np.array(map((lambda x:max(x,0)),S[i]))
-            #for k in range(len(S[i])):
-            #    S[i][k] += rate * alpha * gradient_S1(k,v,f)
-            #    S[i][k] += rate * alpha * np.array(map(gradient,v,f,H2[k])).sum()
-            #    if S[i][k] < 0:
-            #        S[i][k] = 0
             r = S[i]
             S[i] -= rate * alpha * np.transpose(H1).dot(H1.dot(S[i]) - W[i]) + 1e-8
-            S[i] = np.array(map((lambda x:max(x,0)),S[i]),dtype = np.float32)
-            for k in range(H1.shape[0]):
-                gradient_H1(k,r,i,rate,alpha)
-            rate *= 0.98
+            S[i] = np.array(map((lambda x:max(x,0)),S[i]))
+            if np.isnan(S[i].any()):
+                print S[i]
+                j = max_iter
+                break
+            gradient_H1(r,i,rate,alpha)
             #time2 = time.time()
             #print time2 - time1
+        rate *= 0.88
+        j += 1
 
 @autojit
-def sv(e):
-    return np.array(map(softmax,e))
-
-@autojit
-def gradient_H2(v,f,s,rate,alpha):
-    global H2
-    g = v - f
-    H2 += rate * alpha * g
-    H2 = np.transpose(np.transpose(H2) + s)
-
-@autojit
-def gradient_S1(k,v,f):
-    global H2
-    return ((v - f) * H2[k]).sum()
-    #return np.array(map(gradient,v,f,H2[k])).sum()
-
-@autojit
-def gradient_S2(i,rate,alpha):
-    global W
-    global S
-    global H1
-    S[i] -= rate * alpha * np.transpose(H1).dot(H1.dot(S[i]) - W[i]) + 1e-8
-    S[i] = np.array(map((lambda x:(x > 0)),S[i]),dtype = float)
-
-@autojit
-def gradient_H1(k,r,i,rate,alpha):
+def gradient_H1(r,i,rate,alpha):
     global W
     global H1
-    H1[k] -= rate * alpha * (H1[k].dot(r) - W[i][k]) * r + 2e-8 * H1[k]
+    for k in range(H1.shape[0]):
+        H1[k] -= rate * alpha * (H1[k].dot(r) - W[i][k]) * r + 2e-8 * H1[k]
 
 class MC():
 
@@ -142,12 +115,12 @@ class MC():
             selected.append(in_list[i].strip('\n'))
         for i in range(len(selected)):
             articleDict[int(selected[i])] = i
-        words = cPickle.load(open("data/words",'rb'))
-        self.wordList = []
-        for word in self.words:
-            if word in words:
-                self.wordList.append(word)
-        cPickle.dump(self.wordList,open("data/wordList",'wb'))
+        #words = cPickle.load(open("data/words",'rb'))
+        self.wordList = cPickle.load(open("data/wordList",'rb'))
+        #for word in self.words:
+        #    if word in words:
+        #        self.wordList.append(word)
+        #cPickle.dump(self.wordList,open("data/wordList",'wb'))
         for i in range(len(self.wordList)):
             wordDict[self.wordList[i]] = i
         rowNum = len(wordDict.keys())
@@ -208,7 +181,6 @@ class MC():
             if self.wordList[i] in wordsim:
                 wordVectors[self.wordList[i]] = construct[i]
         cPickle.dump([columnNum,wordVectors],open("data/mc_matrix",'wb'))
-        print "MC ok"
 
     def nn(self,k,max_iter,alpha,proc_number):
         global matrix
@@ -220,21 +192,23 @@ class MC():
         vectors = [list(self.model[word]) for word in self.wordList]
         W = np.array(vectors,dtype = np.float32)
         del vectors
-        H1 = np.random.rand(W.shape[1],k) / 10000
-        S = np.random.rand(W.shape[0],k) / 10000
-        H2 = np.random.rand(k,len(articleDict)) / 10000
+        H1 = np.array(np.random.rand(W.shape[1],k) / 100,dtype = np.float32)
+        S = np.array(np.random.rand(W.shape[0],k),dtype = np.float32)
+        H2 = np.array(np.random.rand(k,len(articleDict)) / 100,dtype = np.float32)
         print "Begin Optimizing"
+        #for i in range(2):
         optimize(0,S.shape[0],max_iter,alpha)
+        print "Optimizing ok"
         wordVectors = {}
         myESA = ESA.ESA()
         wordsim = myESA.getWordSim()
         for i in range(len(S)):
             if self.wordList[i] in wordsim:
                 wordVectors[self.wordList[i]] = list(S[i])
-        cPickle.dump([columnNum,wordVectors],open("data/mc_matrix",'wb'))
+        cPickle.dump([k,wordVectors],open("data/mc_matrix",'wb'))
 
 if __name__ == "__main__":
     myMC = MC("text8.txt")
     myMC.loadMatrix(20)
-    myMC.nn(1000,10,0.05,20)
+    myMC.nn(1000,2,0.005,20)
     print "WordVectors ok"
